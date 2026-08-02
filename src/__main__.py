@@ -1,6 +1,6 @@
 import argparse
 from .schemas import DataLoader, TestPrompt, FunctionDefinition
-from llm_sdk.llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model
 
 
 def main() -> None:
@@ -13,7 +13,7 @@ def main() -> None:
         help='The output file')
     parser.add_argument(
         '--functions_definition', type=str,
-        default="data/input/functions_definitions.json",
+        default="data/input/functions_definition.json",
         help='The functions file')
     args = parser.parse_args()
 
@@ -21,3 +21,13 @@ def main() -> None:
     prompts: list[TestPrompt] = prompt_loader.prompt_request()
     function_loader: DataLoader = DataLoader(args.functions_definition)
     functions: list[FunctionDefinition] = function_loader.function_request()
+
+    llm: Small_LLM_Model = Small_LLM_Model()
+
+    print(f"Exito hemos cargado {len(prompts)} prompts")
+    print(f"Exito hemos cargado {len(functions)} functions")
+    print("Motor LLM instaciado y listo para la accion")
+
+
+if __name__ == "__main__":
+    main()
