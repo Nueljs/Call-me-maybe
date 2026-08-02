@@ -1,6 +1,8 @@
 import argparse
 from .schemas import DataLoader, TestPrompt, FunctionDefinition
-from llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model  # type: ignore
+from .prompt_builder import build_context
+import numpy as np
 
 
 def main() -> None:
@@ -27,6 +29,12 @@ def main() -> None:
     print(f"Exito hemos cargado {len(prompts)} prompts")
     print(f"Exito hemos cargado {len(functions)} functions")
     print("Motor LLM instaciado y listo para la accion")
+
+    first_prompt: str = prompts[0].prompt
+    final_text = build_context(functions, first_prompt)
+    print(final_text)
+    input_ids_tensor: torch.tensor = llm.encode(final_text)
+
 
 
 if __name__ == "__main__":
