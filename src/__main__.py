@@ -4,6 +4,7 @@ from llm_sdk import Small_LLM_Model  # type: ignore
 from .prompt_builder import build_context
 import numpy as np
 from typing import Any
+import json
 
 
 def main() -> None:
@@ -27,18 +28,25 @@ def main() -> None:
 
     llm: Small_LLM_Model = Small_LLM_Model()
 
-    # print(f"Exito hemos cargado {len(prompts)} prompts")
-    # print(f"Exito hemos cargado {len(functions)} functions")
-    # print("Motor LLM instaciado y listo para la accion")
-
     first_prompt: str = prompts[0].prompt
     final_text = build_context(functions, first_prompt)
-    # print(final_text)
+
     input_ids_tensor: Any = llm.encode(final_text)
-    print(input_ids_tensor)
     input_ids: list[int] = input_ids_tensor[0].tolist()
     logits: list[float] = llm.get_logits_from_input_ids(input_ids)
-    next_token_id: int = int(np.argmax(logits))
+    # next_token_id: int = int(np.argmax(logits))
+    # next_word: str = llm.decode([next_token_id])
+    # print(next_word)
+    path_vocab: str = llm.get_path_to_vocab_file()
+
+    with open(path_vocab, 'r', encoding='utf-8') as f:
+        vocab: dict[str, int] = json.load(f)
+
+    id_key: int = vocab["{"]
+    logits_array = np.array(logits)
+    hacked_logits = np.full_like(logits_array, -np.inf)
+    hacked_logits[id_key] = 0.0
+    next_token_id: int = int(np.argmax(hacked_logits))
     next_word: str = llm.decode([next_token_id])
     print(next_word)
 
