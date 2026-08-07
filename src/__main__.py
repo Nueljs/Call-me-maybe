@@ -2,9 +2,7 @@ import argparse
 from .schemas import DataLoader, TestPrompt, FunctionDefinition
 from llm_sdk import Small_LLM_Model  # type: ignore
 from .prompt_builder import build_context
-import numpy as np
-from typing import Any
-import json
+from .generator import Generator
 
 
 def main() -> None:
@@ -27,28 +25,13 @@ def main() -> None:
     functions: list[FunctionDefinition] = function_loader.function_request()
 
     llm: Small_LLM_Model = Small_LLM_Model()
+    generator: Generator = Generator(llm)
 
     first_prompt: str = prompts[0].prompt
     final_text = build_context(functions, first_prompt)
 
-    input_ids_tensor: Any = llm.encode(final_text)
-    input_ids: list[int] = input_ids_tensor[0].tolist()
-    logits: list[float] = llm.get_logits_from_input_ids(input_ids)
-    # next_token_id: int = int(np.argmax(logits))
-    # next_word: str = llm.decode([next_token_id])
-    # print(next_word)
-    path_vocab: str = llm.get_path_to_vocab_file()
-
-    with open(path_vocab, 'r', encoding='utf-8') as f:
-        vocab: dict[str, int] = json.load(f)
-
-    id_key: int = vocab["{"]
-    logits_array = np.array(logits)
-    hacked_logits = np.full_like(logits_array, -np.inf)
-    hacked_logits[id_key] = 0.0
-    next_token_id: int = int(np.argmax(hacked_logits))
-    next_word: str = llm.decode([next_token_id])
-    print(next_word)
+    result: str = generator.generate(final_text)
+    print(result)
 
 
 if __name__ == "__main__":
