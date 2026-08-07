@@ -25,7 +25,7 @@ def main() -> None:
     functions: list[FunctionDefinition] = function_loader.function_request()
 
     llm: Small_LLM_Model = Small_LLM_Model()
-    generator: Generator = Generator(llm)
+    generator: Generator = Generator(llm, functions)
 
     first_prompt: str = prompts[0].prompt
     final_text = build_context(functions, first_prompt)
