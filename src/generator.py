@@ -35,8 +35,12 @@ class Generator:
         current_state: int = 0
 
         id_key: int = self.vocab["{"]
-        ids_name_key = self.llm.encode('\n "name": ')[0].tolist()
+        ids_name_key: list[int] = self.llm.encode('\n "name": ')[0].tolist()
         name_pointer: int = 0
+
+        ids_params_key: list[int] = self.llm.encode(
+            '\n "parameters": {')[0].tolist()
+        params_pointer: int = 0
 
         active_paths: list[list[int]] = [
             path.copy() for path in self.fn_token_paths
@@ -61,6 +65,11 @@ class Generator:
                     mask3[path[0]] = logits_array[path[0]]
 
                 logits_array = mask3
+
+            elif current_state == 3:
+                mask4 = np.full_like(logits, -np.inf)
+                mask4[ids_params_key[params_pointer]] = 0.0
+                logits_array = mask4
 
             next_token_id: int = int(np.argmax(logits_array))
             token_text: str = self.llm.decode([next_token_id])
@@ -89,6 +98,12 @@ class Generator:
 
                 if len(active_paths[0]) == 0:
                     current_state = 3
+
+            elif current_state == 3:
+                params_pointer = params_pointer + 1
+
+                if params_pointer == len(ids_params_key):
+                    current_state = 4
 
             if current_state > 0 and open_brackets == 0:
                 break

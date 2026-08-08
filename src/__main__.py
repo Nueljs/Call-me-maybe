@@ -27,7 +27,7 @@ def main() -> None:
     llm: Small_LLM_Model = Small_LLM_Model()
     generator: Generator = Generator(llm, functions)
 
-    first_prompt: str = prompts[0].prompt
+    first_prompt: str = prompts[10].prompt
     final_text = build_context(functions, first_prompt)
 
     result: str = generator.generate(final_text)

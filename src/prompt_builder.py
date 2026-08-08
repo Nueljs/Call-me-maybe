@@ -10,6 +10,6 @@ def build_context(functions: list[FunctionDefinition], user_input: str) -> str:
     final_prompt: str = f"""You are an expert analyst. You have access to the
     following tools:{functions_block}
     The user said: "{user_input}"
-    Generate a call to the correct function in json format:"""
+    Generate a call to the correct function in json format:\n"""
 
     return final_prompt
