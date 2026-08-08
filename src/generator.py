@@ -15,6 +15,11 @@ class Generator:
         self.functions_names: list[str] = [
             f'"{function.name}",' for function in self.functions
         ]
+        self.fn_token_paths: list[list[int]] = []
+
+        for fn_names in self.functions_names:
+            tokens = self.llm.encode(fn_names)[0].tolist()
+            self.fn_token_paths.append(tokens)
 
     def _load_vocab(self) -> dict[str, int]:
         """Loads the model's vocabulary and returns it as a dictionary"""
@@ -33,6 +38,10 @@ class Generator:
         ids_name_key = self.llm.encode('\n "name": ')[0].tolist()
         name_pointer: int = 0
 
+        active_paths: list[list[int]] = [
+            path.copy() for path in self.fn_token_paths
+        ]
+
         for _ in range(max_tokens):
             logits: list[float] = self.llm.get_logits_from_input_ids(input_ids)
             logits_array = np.array(logits)
@@ -46,6 +55,13 @@ class Generator:
                 mask2[ids_name_key[name_pointer]] = 0
                 logits_array = mask2
 
+            elif current_state == 2:
+                mask3 = np.full_like(logits, -np.inf)
+                for path in active_paths:
+                    mask3[path[0]] = logits_array[path[0]]
+
+                logits_array = mask3
+
             next_token_id: int = int(np.argmax(logits_array))
             token_text: str = self.llm.decode([next_token_id])
 
@@ -57,10 +73,22 @@ class Generator:
                 if "{" in token_text:
                     current_state = 1
 
-            if current_state == 1:
+            elif current_state == 1:
                 name_pointer = name_pointer + 1
                 if name_pointer == len(ids_name_key):
                     current_state = 2
+
+            elif current_state == 2:
+                new_paths: list[list[int]] = []
+
+                for path in active_paths:
+                    if path[0] == next_token_id:
+                        new_paths.append(path[1:])
+
+                active_paths = new_paths
+
+                if len(active_paths[0]) == 0:
+                    current_state = 3
 
             if current_state > 0 and open_brackets == 0:
                 break
