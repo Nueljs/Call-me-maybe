@@ -29,6 +29,8 @@ class Generator:
 
     def generate(self, prompt: str, max_tokens: int = 200) -> str:
         input_ids_tensor: Any = self.llm.encode(prompt)
+        original_prompt_id: list[int] = input_ids_tensor[0].tolist()
+        prompt_length: int = len(original_prompt_id)
         input_ids: list[int] = input_ids_tensor[0].tolist()
 
         open_brackets: int = 0
@@ -108,4 +110,6 @@ class Generator:
             if current_state > 0 and open_brackets == 0:
                 break
 
-        return self.llm.decode(input_ids)
+        generated_ids: list[int] = input_ids[prompt_length:]
+
+        return self.llm.decode(generated_ids)

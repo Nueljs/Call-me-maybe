@@ -14,6 +14,12 @@ class TestPrompt(BaseModel):
     prompt: str
 
 
+class OutputResult(BaseModel):
+    prompt: str
+    name: str
+    parameters: dict[str, Any]
+
+
 class DataLoader:
     def __init__(self, path: str) -> None:
         self.path: str = path

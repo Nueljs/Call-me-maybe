@@ -1,8 +1,11 @@
 import argparse
-from .schemas import DataLoader, TestPrompt, FunctionDefinition
+from .schemas import DataLoader, TestPrompt, FunctionDefinition, OutputResult
 from llm_sdk import Small_LLM_Model  # type: ignore
 from .prompt_builder import build_context
 from .generator import Generator
+import json
+import os
+from typing import Any
 
 
 def main() -> None:
@@ -19,19 +22,48 @@ def main() -> None:
         help='The functions file')
     args = parser.parse_args()
 
+    input_path: str = str(args.input)
+    output_path: str = str(args.output)
+    function_path: str = str(args.functions_definition)
+
     prompt_loader: DataLoader = DataLoader(args.input)
     prompts: list[TestPrompt] = prompt_loader.prompt_request()
+
     function_loader: DataLoader = DataLoader(args.functions_definition)
     functions: list[FunctionDefinition] = function_loader.function_request()
 
     llm: Small_LLM_Model = Small_LLM_Model()
     generator: Generator = Generator(llm, functions)
 
-    first_prompt: str = prompts[10].prompt
-    final_text = build_context(functions, first_prompt)
+    final_result: list[dict[str, Any]] = []
 
-    result: str = generator.generate(final_text)
-    print(result)
+    for prompt_item in prompts:
+        final_text = build_context(functions, prompt_item.prompt)
+        result_str: str = generator.generate(final_text)
+
+        try:
+            generated_dict: dict[str, Any] = json.loads(result_str)
+
+            final_obj: OutputResult = OutputResult(
+                prompt=prompt_item.prompt,
+                name=generated_dict["name"],
+                parameters=generated_dict["parameters"]
+            )
+
+            final_result.append(final_obj.model_dump())
+
+            print(f"Procesado: '{prompt_item.prompt}' -> {generated_dict['name']}")
+        except json.JSONDecodeError:
+            print(f"Error prcessing prompt: '{prompt_item.prompt}'")
+        except Exception as e:
+            print(
+                f"Error de validacion en el prompt: '{prompt_item.prompt}' - "
+                f"{e}")
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    with open(output_path, 'w', encoding="utf-8") as f:
+        json.dump(final_result, f, indent=2)
 
 
 if __name__ == "__main__":
