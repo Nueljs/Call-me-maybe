@@ -26,10 +26,10 @@ def main() -> None:
     output_path: str = str(args.output)
     function_path: str = str(args.functions_definition)
 
-    prompt_loader: DataLoader = DataLoader(args.input)
+    prompt_loader: DataLoader = DataLoader(input_path)
     prompts: list[TestPrompt] = prompt_loader.prompt_request()
 
-    function_loader: DataLoader = DataLoader(args.functions_definition)
+    function_loader: DataLoader = DataLoader(function_path)
     functions: list[FunctionDefinition] = function_loader.function_request()
 
     llm: Small_LLM_Model = Small_LLM_Model()
@@ -52,12 +52,14 @@ def main() -> None:
 
             final_result.append(final_obj.model_dump())
 
-            print(f"Procesado: '{prompt_item.prompt}' -> {generated_dict['name']}")
+            print(f"Processed: '{prompt_item.prompt}' ->"
+                  f" {generated_dict['name']}")
         except json.JSONDecodeError:
-            print(f"Error prcessing prompt: '{prompt_item.prompt}'")
+            print(f"Error processing the prompt: '{prompt_item.prompt}'")
+            print(f"Texto crudo: {result_str}")
         except Exception as e:
             print(
-                f"Error de validacion en el prompt: '{prompt_item.prompt}' - "
+                f"Validation error in the prompt: '{prompt_item.prompt}' - "
                 f"{e}")
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
