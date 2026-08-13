@@ -1,5 +1,5 @@
 ```markdown
-*This project has been created as part of the 42 curriculum by nuel.*
+*This project has been created as part of the 42 curriculum by macerver.*
 
 # Call-me-maybe: Introduction to function calling in LLMs
 
