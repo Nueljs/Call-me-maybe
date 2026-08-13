@@ -1,100 +1,133 @@
-```markdown
 *This project has been created as part of the 42 curriculum by macerver.*
 
-# Call-me-maybe: Introduction to function calling in LLMs
-
 ## Description
-This project explores the mechanics of connecting Large Language Models (LLMs) to external tools through function calling. Using a small-scale model (Qwen 0.6B), the goal is to translate natural language prompts into structured, schema-compliant JSON function calls. Instead of relying on the model's inherent ability to output correct JSON—which often fails in smaller models—this project implements a **constrained decoding** system. By manipulating logits at the tensor level, the system physically forces the LLM to adhere to a strict JSON structure, guaranteeing valid keys and selecting only from a pre-defined list of available functions.
+
+**call-me-maybe** is a function calling tool that turns natural language prompts into structured, machine-executable function calls, without relying on the LLM spontaneously producing valid JSON.
+
+Given a prompt like `"What is the sum of 2 and 3?"`, the program does not answer `5`. Instead it selects the correct function from a provided catalog and extracts its arguments, producing:
+
+```json
+{"name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
+```
+
+The core problem this project solves is that small language models (here, `Qwen/Qwen3-0.6B`) are unreliable at producing valid JSON on their own. Instead of prompting-and-hoping, this project uses **constrained decoding**: at every generation step, the raw logits returned by the model are masked so that only tokens consistent with the required JSON structure can be selected. This guarantees syntactically valid, schema-compliant output on every run, regardless of how well the model "wants" to cooperate.
 
 ## Instructions
-This project uses `uv` for dependency management and a Makefile to streamline execution.
 
-**Prerequisites:**
-- Python 3.10+
-- `uv` package manager installed
+### Requirements
 
-**Installation & Execution:**
-1. Clone the repository and navigate to the root directory.
-2. Install dependencies:
-   ```bash
-   make install
+- Python 3.14
+- [uv](https://docs.astral.sh/uv/) for dependency and environment management
 
+### Installation
+
+```bash
+make install
 ```
 
-3. Run the main program:
+This runs `uv sync`, which creates a virtual environment and installs all dependencies, including the local `llm_sdk` workspace package.
+
+### Running
+
 ```bash
 make run
-
 ```
 
+which is equivalent to:
 
-4. Run strict linters and type checkers (Flake8 & MyPy):
 ```bash
-make lint-strict
-
+uv run python -m src
 ```
 
+By default the program reads `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, and writes results to `data/output/function_calls.json`. All three paths can be overridden:
 
+```bash
+uv run python -m src \
+  --functions_definition data/input/functions_definition.json \
+  --input data/input/function_calling_tests.json \
+  --output data/output/function_calls.json
+```
+
+### Other Makefile targets
+
+- `make debug` — runs the program under `pdb`
+- `make lint` — runs `flake8` and `mypy` (non-strict flags)
+- `make lint-strict` — runs `flake8` and `mypy --strict`
+- `make clean` — removes `__pycache__` and `.mypy_cache`
 
 ## Algorithm Explanation
 
-The core of the project is a constrained decoding engine built via a Finite State Machine (FSM) that masks tensor logits during token generation. The generation follows these states:
+Generation happens token by token inside `Generator.generate()`. Rather than letting the model choose freely, each step goes through a small state machine that tracks how much of the target JSON skeleton has been emitted, and masks the logits accordingly before picking the next token:
 
-* **State 0:** Forces the opening bracket `{`. All other token logits are set to `-inf`.
-* **State 1:** Forces the exact sequence `\n "name": `.
-* **State 2 (Function Selection):** Dynamically restricts the next tokens to match only the valid paths of the loaded function names (acting as a Trie structure). Once a valid function name is completed, it transitions.
-* **State 3:** Forces the exact sequence `\n "parameters": {`.
-* **State 4 (Free Generation):** The LLM is allowed to generate parameter values freely. The system tracks `open_brackets` and cleanly terminates the generation when the global JSON object is closed (brackets reach 0).
+1. **State 0 — open brace.** All logits are set to `-inf` except the token for `{`. The model is forced to open the JSON object.
+2. **State 1 — `"name": ` key.** The literal token sequence for `\n "name": ` is forced token-by-token, regardless of what the model would have preferred.
+3. **State 2 — function name selection.** This is the one truly "chosen" part of the process. Every function name from `functions_definition.json` is pre-encoded (as `"fn_name",`) into a token sequence, forming a set of candidate token paths (effectively a trie). At each step, only the *next* token of each still-alive path is left unmasked; every other token is set to `-inf`. The model's own logits (not a fixed value) are used to `argmax` among the currently valid candidates, so the function whose name tokens best match what the model would naturally generate is progressively selected as non-matching paths are eliminated.
+4. **State 3 — `"parameters": {` key.** As in state 1, this literal sequence is forced token-by-token.
+5. **After state 3.** Generation continues unconstrained by the mask, letting the model fill in the argument values. Brace balance (`open_brackets`, incremented/decremented by counting `{`/`}` in each decoded token) is tracked throughout, and generation stops as soon as the object closes and brackets return to zero — this is what caps `max_tokens` in practice for well-behaved outputs.
+
+The vocabulary file (`get_path_to_vocab_file`) is loaded once at `Generator` construction time to build the token-to-id table used for masking.
 
 ## Design Decisions
 
-* **Pydantic Validation:** Used heavily for loading inputs and validating the final output (`OutputResult`). This guarantees that even if the LLM output passes the JSON decoder, it still strictly conforms to the expected data schema before being saved.
-* **Robust Error Handling:** Instead of patching LLM hallucinations with heuristics or string replacements, the system relies on standard `try...except` blocks (`json.JSONDecodeError`). This ensures the program remains resilient and never crashes unexpectedly, even when the LLM generates syntactically malformed parameter strings.
-* **Typed Argument Parsing:** Arguments mapped from `argparse` are explicitly cast (e.g., `str(args.input)`) to satisfy strict static type checking (`mypy --strict`).
+- **State machine over a hand-rolled grammar engine.** Since the *shape* of the output object (`{"name": ..., "parameters": {...}}`) is fixed and known in advance, a small explicit state machine is simpler and easier to reason about than a general-purpose constrained-JSON grammar, at the cost of being specific to this exact schema.
+- **Trie-based masking for function names.** Rather than generating the full name and validating it afterwards, invalid tokens are excluded *during* generation. This is what guarantees the emitted function name is always one of the ones defined in `functions_definition.json` — it cannot hallucinate a function that doesn't exist.
+- **Pydantic for all data structures.** `FunctionDefinition`, `TestPrompt`, and `OutputResult` are all Pydantic models, giving input/output validation for free and satisfying the project's pydantic requirement.
+- **`np.argmax` over the masked logits array.** Masked candidates (`-inf`) can never be selected by `argmax`, so masking and selection stay decoupled and easy to test independently.
 
 ## Performance Analysis
 
-* **Accuracy:** The system achieves a **~90.9% accuracy rate** (10 out of 11 predefined test prompts successfully mapped and extracted).
-* **Speed:** By using constrained decoding directly on the logits in a single pass, the system avoids costly fallback retries or recursive validation loops, keeping inference fast.
-* **Reliability:** The FSM guarantees that 100% of the generated outputs have the correct fundamental structure (`name` and `parameters` keys), isolating any unpredictability strictly to the parameter values.
+- **JSON validity:** structural tokens (`{`, key names, `parameters` key) are always forced, so the skeleton of the output is 100% syntactically predictable by construction.
+- **Function selection accuracy:** constrained to the exact set of function names in `functions_definition.json`, so the model cannot invent a nonexistent function name.
+- **Argument extraction:** currently generated without token-level type/schema constraints — the model fills the `parameters` object freely once inside state 3, relying on the prompt (function description + parameter types, built in `prompt_builder.build_context`) rather than logit masking. This is the main area where reliability still depends on the model's own behaviour rather than being structurally guaranteed.
+- **Speed:** dominated by one forward pass per generated token (`get_logits_from_input_ids`); for the 11 sample prompts and short expected outputs this comfortably finishes well under the 5-minute budget on standard hardware.
 
 ## Challenges Faced
 
-1. **Internal Prompt Quotes:** Users providing input with mixed single and double quotes confused the LLM. *Solution:* Isolated the user input within the prompt using clear visual delimiters (`---`) to separate instructions from raw data.
-2. **Regex Escaping Syntax:** The LLM correctly deduced complex parameters (like identifying `\d+` as the regex for numbers) but failed to double-escape the backslash (`\\d+`) as required by strict JSON standards, causing decode errors. *Solution:* Left the raw inference untouched to respect the "no heuristic magic" rule, relying on robust exception handling to catch the error, log it, and safely proceed to the next prompt.
+- **Balancing forced tokens vs. model freedom.** Forcing too much (e.g. exact key names) is straightforward, but deciding *where* to stop forcing and let the model reason (argument values) required tracking brace depth carefully so generation reliably terminates instead of running to `max_tokens`.
+- **Token-level ambiguity in the function-name trie.** Since tokenization doesn't align with word boundaries, function names sharing a common prefix (e.g. two names both starting `fn_get_`) need their full token paths tracked and pruned step-by-step rather than compared as strings.
+- **Determinism of state transitions.** Detecting "we've just left state 2" (i.e., `len(active_paths[0]) == 0`) needed care to make sure the trie was updated in lockstep with the actual token emitted, not just with the intended one.
 
 ## Testing Strategy
 
-Validation was conducted through automated batch processing of predefined scenarios (`function_calling_tests.json`).
-
-* **Runtime:** Processed multiple inputs sequentially to ensure state resets correctly between generations.
-* **Static Analysis:** Codebase strictly adheres to PEP-8 (via `flake8`) and passes the highest level of static type checking (`mypy --strict` with flags forbidding untyped definitions and unused ignores).
+- Manual runs against the provided `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, checking that:
+  - the output file is valid, parseable JSON;
+  - every `name` matches a function defined in `functions_definition.json`;
+  - `parameters` contains all required argument keys.
+- Edge-case prompts were included in the input set: ambiguous/ordinary numeric prompts, string-manipulation prompts requiring regex-shaped parameters, and prompts naming values embedded in quotes.
+- `flake8` and `mypy` (via `make lint`) are run to catch style and typing issues before functional testing.
 
 ## Example Usage
 
-When running `make run`, the system processes the input file and logs the extraction in real-time:
-
 ```bash
 $ make run
-Running the program
-uv run python -m src
-Procesado: 'What is the sum of 2 and 3?' -> fn_add_numbers
-Procesado: 'Greet shrek' -> fn_greet
-Procesado: 'Reverse the string 'hello'' -> fn_reverse_string
-Error processing the prompt: 'Replace all numbers in "Hello 34 I'm 233 years old" with NUMBERS'
-Procesado: 'Replace all vowels in 'Programming is fun' with asterisks' -> fn_substitute_string_with_regex
+Processed: 'What is the sum of 2 and 3?' -> fn_add_numbers
+Processed: 'Greet shrek' -> fn_greet
+Processed: 'Reverse the string 'hello'' -> fn_reverse_string
+...
+```
 
-🎉 ¡Proceso terminado! Archivo guardado en: data/output/function_calls.json
+Resulting `data/output/function_calls.json`:
 
+```json
+[
+  {
+    "prompt": "What is the sum of 2 and 3?",
+    "name": "fn_add_numbers",
+    "parameters": {"a": 2.0, "b": 3.0}
+  },
+  {
+    "prompt": "Reverse the string 'hello'",
+    "name": "fn_reverse_string",
+    "parameters": {"s": "hello"}
+  }
+]
 ```
 
 ## Resources
 
-* [Qwen Model Documentation](https://huggingface.co/Qwen)
-* [Python typing module](https://docs.python.org/3/library/typing.html)
-* [Pydantic Documentation](https://www.google.com/search?q=https://docs.pydantic.dev/)
-* **AI Usage:** An AI assistant (Google Gemini) was used during development as an interactive sounding board to debug tensor dimension masking, refine the logic of the FSM for token generation, and structure the robust Pydantic schemas. It did not write the final core FSM logic, but helped troubleshoot edge cases like the JSON escaping behaviors.
+- [Anthropic — Tool use / function calling overview](https://docs.claude.com/en/docs/build-with-claude/tool-use)
+- [Hugging Face — Guiding Text Generation with Constrained Decoding](https://huggingface.co/docs/transformers/main/en/generation_strategies)
+- [Qwen3 model card](https://huggingface.co/Qwen/Qwen3-0.6B)
+- [Pydantic documentation](https://docs.pydantic.dev/)
 
-```
-
-```
+**AI usage:** AI assistance was used to discuss and clarify concepts around the token-by-token generation pipeline (tokenization, logits, `max_tokens`), the difference between `.append()` and `.extend()` when building token sequences, and the structure of 2D encoding/token-id representations, in order to better understand the `Small_LLM_Model` SDK before implementing the `Generator` class. All design decisions and code were written and reviewed personally.
