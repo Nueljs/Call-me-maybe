@@ -14,7 +14,8 @@ def main() -> None:
         '--input', type=str, default="data/input/function_calling_tests.json",
         help='The input file')
     parser.add_argument(
-        '--output', type=str, default="data/output/function_calls.json",
+        '--output', type=str,
+        default="data/output/function_calling_results.json",
         help='The output file')
     parser.add_argument(
         '--functions_definition', type=str,
