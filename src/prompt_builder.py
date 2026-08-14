@@ -2,6 +2,12 @@ from .schemas import FunctionDefinition
 
 
 def build_context(functions: list[FunctionDefinition], user_input: str) -> str:
+    """Builds the full prompt context including function schemas and user
+    input.
+        Returns:
+            str: Formatted prompt for the LLM
+    """
+
     list_of_text: list[str] = [
         func.model_dump_json(indent=2) for func in functions]
 
