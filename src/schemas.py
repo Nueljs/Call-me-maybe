@@ -54,7 +54,7 @@ class DataLoader:
                 return prompts
 
         except (json.JSONDecodeError, Exception) as e:
-            print(f"Error reading prompts form '{self.path}': {e}")
+            print(f"Error reading prompts from '{self.path}': {e}")
             return []
 
     def function_request(self) -> list[FunctionDefinition]:

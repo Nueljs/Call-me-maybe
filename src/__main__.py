@@ -9,6 +9,7 @@ from typing import Any
 
 
 def main() -> None:
+    """Execute the main flow of the prompt processing pipeline."""
     parser = argparse.ArgumentParser(description='Processing args')
     parser.add_argument(
         '--input', type=str, default="data/input/function_calling_tests.json",

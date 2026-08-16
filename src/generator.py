@@ -6,9 +6,11 @@ from .schemas import FunctionDefinition
 
 
 class Generator:
+    """Class responsible for generating constrained JSON function calls."""
     def __init__(self,
                  llm: Small_LLM_Model,
                  functions: list[FunctionDefinition]) -> None:
+        """Initialize the Generator with the LLM and target functions."""
         self.llm: Small_LLM_Model = llm
         self.vocab: dict[str, int] = self._load_vocab()
         self.functions: list[FunctionDefinition] = functions
@@ -28,6 +30,14 @@ class Generator:
             return json.load(f)
 
     def generate(self, prompt: str, max_tokens: int = 200) -> str:
+        """Generate a constrained function call based on the prompt.
+
+        Args:
+            prompt (str): The natural language input from the user.
+            max_tokens (int): The maximum number of tokens to generate.
+        Returns:
+            str: A raw string containing the generated JSON.
+        """
         input_ids_tensor: Any = self.llm.encode(prompt)
         original_prompt_id: list[int] = input_ids_tensor[0].tolist()
         prompt_length: int = len(original_prompt_id)
