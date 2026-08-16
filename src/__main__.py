@@ -57,7 +57,7 @@ def main() -> None:
                   f" {generated_dict['name']}")
         except json.JSONDecodeError:
             print(f"Error processing the prompt: '{prompt_item.prompt}'")
-            print(f"Texto crudo: {result_str}")
+            print(f"Raw-text: {result_str}")
         except Exception as e:
             print(
                 f"Validation error in the prompt: '{prompt_item.prompt}' - "
