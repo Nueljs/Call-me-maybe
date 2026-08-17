@@ -27,7 +27,13 @@ class Generator:
         """Loads the model's vocabulary and returns it as a dictionary"""
         path_vocab: str = self.llm.get_path_to_vocab_file()
         with open(path_vocab, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data: dict[str, int] = json.load(f)
+            return data
+
+    def _get_next_token(self, input_ids: list[int], allowed_tokens : list[int]) -> int:
+        logits: list[float] = self.llm.get_logits_from_input_ids(input_ids)
+        logits_array = np.array(logits)
+
 
     def generate(self, prompt: str, max_tokens: int = 200) -> str:
         """Generate a constrained function call based on the prompt.
@@ -122,4 +128,4 @@ class Generator:
 
         generated_ids: list[int] = input_ids[prompt_length:]
 
-        return self.llm.decode(generated_ids)
+        return str(self.llm.decode(generated_ids))
