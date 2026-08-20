@@ -39,13 +39,13 @@ which is equivalent to:
 uv run python -m src
 ```
 
-By default the program reads `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, and writes results to `data/output/function_calls.json`. All three paths can be overridden:
+By default the program reads `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, and writes results to `data/output/function_calling_results.json`. All three paths can be overridden:
 
 ```bash
 uv run python -m src \
   --functions_definition data/input/functions_definition.json \
   --input data/input/function_calling_tests.json \
-  --output data/output/function_calls.json
+  --output data/output/function_calling_results.json
 ```
 
 ### Other Makefile targets
@@ -106,7 +106,7 @@ Processed: 'Reverse the string 'hello'' -> fn_reverse_string
 ...
 ```
 
-Resulting `data/output/function_calls.json`:
+Resulting `data/output/function_calling_results.json`:
 
 ```json
 [
