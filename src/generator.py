@@ -8,9 +8,11 @@ from enum import Enum
 
 class States(Enum):
     START = 1
-    FUNC_NAME = 2
-    PARAMS = 3
-    END = 4
+    NAME_KEY = 2
+    FUNC_NAME = 3
+    PARAM_KEY = 4
+    PARAMS = 5
+    END = 6
 
 
 class Generator:
@@ -25,11 +27,11 @@ class Generator:
         self.functions_names: list[str] = [
             f'"{function.name}",' for function in self.functions
         ]
-        self.fn_token_paths: list[list[int]] = []
+        self.fn_token_paths: list[tuple[int, list[int]]] = []
 
-        for fn_names in self.functions_names:
+        for index, fn_names in enumerate(self.functions_names):
             tokens = self.llm.encode(fn_names)[0].tolist()
-            self.fn_token_paths.append(tokens)
+            self.fn_token_paths.append((index, tokens))
 
     def _load_vocab(self) -> dict[str, int]:
         """Loads the model's vocabulary and returns it as a dictionary"""
@@ -39,34 +41,39 @@ class Generator:
             return data
 
     def _advance_func_paths(self,
-                            active_paths: list[list[int]],
-                            token: int) -> list[list[int]]:
-        new_active_paths: list[list[int]] = []
+                            active_paths: list[tuple[int, list[int]]],
+                            token: int) -> list[tuple[int, list[int]]]:
+        new_active_paths: list[tuple[int, list[int]]] = []
 
         for path in active_paths:
-            if path and path[0] == token:
-                new_active_paths.append(path[1:])
+            if path[1] and path[1][0] == token:
+                new_active_paths.append((path[0], path[1][1:]))
 
         return new_active_paths
 
     def _get_allowed_tokens(self, state: States,
-                            active_paths: list[list[int]] | None = None
+                            active_paths: list[
+                                tuple[int, list[int]]] | None = None
                             ) -> set[int]:
         allowed_tokens: set[int] = set()
         if state == States.START:
             allowed_tokens.add(self.vocab["{"])
 
+        elif state == States.NAME_KEY:
+            allowed_tokens.add(self.llm.encode('"name": '))
+
         elif state == States.FUNC_NAME:
             if active_paths is None:
                 raise ValueError("active_paths required in FUNC_NAME")
             for path in active_paths:
-                if path:
-                    allowed_tokens.add(path[0])
+                if path[1]:
+                    allowed_tokens.add(path[1][0])
 
         return allowed_tokens
 
-    def _has_finished_path(self, active_paths: list[list[int]]) -> bool:
-        return any(not path for path in active_paths)
+    def _has_finished_path(self,
+                           active_paths: list[tuple[int, list[int]]]) -> bool:
+        return any(not path[1] for path in active_paths)
 
     def _get_next_token(self, input_ids: list[int],
                         allowed_tokens: set[int]) -> int:
@@ -95,14 +102,16 @@ class Generator:
         if state == States.START:
             state = States.FUNC_NAME
 
-        active_paths: list[list[int]] = [
-            path.copy() for path in self.fn_token_paths]
+        active_paths: list[tuple[int, list[int]]] = [
+            (index, path.copy())
+            for index, path in self.fn_token_paths]
 
         while state == States.FUNC_NAME:
             allowed_tokens = self._get_allowed_tokens(state, active_paths)
             next_token = self._get_next_token(input_ids, allowed_tokens)
             input_ids.append(next_token)
             active_paths = self._advance_func_paths(active_paths, next_token)
+            print(active_paths)
 
             if self._has_finished_path(active_paths):
                 state = States.PARAMS
