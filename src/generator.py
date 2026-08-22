@@ -33,6 +33,11 @@ class Generator:
             tokens = self.llm.encode(fn_names)[0].tolist()
             self.fn_token_paths.append((index, tokens))
 
+        self.name_key: list[int] = self.llm.encode('"name": ')[0].tolist()
+        self.param_key: list[int] = self.llm.encode(
+            '"parameters": ')[0].tolist()
+        self.current_fixed_path: list[int] = []
+
     def _load_vocab(self) -> dict[str, int]:
         """Loads the model's vocabulary and returns it as a dictionary"""
         path_vocab: str = self.llm.get_path_to_vocab_file()
@@ -58,9 +63,6 @@ class Generator:
         allowed_tokens: set[int] = set()
         if state == States.START:
             allowed_tokens.add(self.vocab["{"])
-
-        elif state == States.NAME_KEY:
-            allowed_tokens.add(self.llm.encode('"name": '))
 
         elif state == States.FUNC_NAME:
             if active_paths is None:
@@ -99,8 +101,14 @@ class Generator:
 
         input_ids.append(next_token)
 
-        if state == States.START:
-            state = States.FUNC_NAME
+        state = States.NAME_KEY
+        self.current_fixed_path = self.name_key.copy()
+        while state == States.NAME_KEY:
+            input_ids.append(self.current_fixed_path[0])
+            self.current_fixed_path = self.current_fixed_path[1:]
+
+            if not self.current_fixed_path:
+                state = States.FUNC_NAME
 
         active_paths: list[tuple[int, list[int]]] = [
             (index, path.copy())
