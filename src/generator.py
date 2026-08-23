@@ -33,9 +33,9 @@ class Generator:
             tokens = self.llm.encode(fn_names)[0].tolist()
             self.fn_token_paths.append((index, tokens))
 
-        self.name_key: list[int] = self.llm.encode('"name": ')[0].tolist()
+        self.name_key: list[int] = self.llm.encode('\n "name": ')[0].tolist()
         self.param_key: list[int] = self.llm.encode(
-            '"parameters": {')[0].tolist()
+            '\n "parameters": {')[0].tolist()
 
     def _load_vocab(self) -> dict[str, int]:
         """Loads the model's vocabulary and returns it as a dictionary"""
@@ -43,6 +43,13 @@ class Generator:
         with open(path_vocab, 'r', encoding='utf-8') as f:
             data: dict[str, int] = json.load(f)
             return data
+
+    def _selected_func(self, active_paths: list[tuple[int, list[int]]]) -> int:
+        for func in active_paths:
+            if len(func[1]) == 0:
+                return func[0]
+
+        raise ValueError("No function path has finished")
 
     def _advance_func_paths(self,
                             active_paths: list[tuple[int, list[int]]],
@@ -132,6 +139,10 @@ class Generator:
 
             if not current_fixed_path:
                 state = States.PARAMS
+
+        if state == States.PARAMS:
+            selected_funct: FunctionDefinition = self.functions[
+                self._selected_func(active_paths)]
 
         return self.llm.decode(input_ids)
 
