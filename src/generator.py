@@ -35,8 +35,7 @@ class Generator:
 
         self.name_key: list[int] = self.llm.encode('"name": ')[0].tolist()
         self.param_key: list[int] = self.llm.encode(
-            '"parameters": ')[0].tolist()
-        self.current_fixed_path: list[int] = []
+            '"parameters": {')[0].tolist()
 
     def _load_vocab(self) -> dict[str, int]:
         """Loads the model's vocabulary and returns it as a dictionary"""
@@ -101,13 +100,15 @@ class Generator:
 
         input_ids.append(next_token)
 
-        state = States.NAME_KEY
-        self.current_fixed_path = self.name_key.copy()
-        while state == States.NAME_KEY:
-            input_ids.append(self.current_fixed_path[0])
-            self.current_fixed_path = self.current_fixed_path[1:]
+        current_fixed_path: list[int] = []
 
-            if not self.current_fixed_path:
+        state = States.NAME_KEY
+        current_fixed_path = self.name_key.copy()
+        while state == States.NAME_KEY:
+            input_ids.append(current_fixed_path[0])
+            current_fixed_path = current_fixed_path[1:]
+
+            if not current_fixed_path:
                 state = States.FUNC_NAME
 
         active_paths: list[tuple[int, list[int]]] = [
@@ -122,6 +123,14 @@ class Generator:
             print(active_paths)
 
             if self._has_finished_path(active_paths):
+                state = States.PARAM_KEY
+
+        current_fixed_path = self.param_key.copy()
+        while state == States.PARAM_KEY:
+            input_ids.append(current_fixed_path[0])
+            current_fixed_path = current_fixed_path[1:]
+
+            if not current_fixed_path:
                 state = States.PARAMS
 
         return self.llm.decode(input_ids)
