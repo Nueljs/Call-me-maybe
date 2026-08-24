@@ -11,8 +11,9 @@ class States(Enum):
     NAME_KEY = 2
     FUNC_NAME = 3
     PARAM_KEY = 4
-    PARAMS = 5
-    END = 6
+    PARAM_NAME = 5
+    PARAM_VALUE = 6
+    END = 7
 
 
 class Generator:
@@ -79,6 +80,15 @@ class Generator:
 
         return allowed_tokens
 
+    def _get_allowed_param_tokens(self, param_paths: list[tuple[str, list[int]]]) -> set[int]:
+        allowed_tokens: set[int] = set()
+
+        for param in param_paths:
+            if param[1]:
+                allowed_tokens.add(param[1][0])
+
+        return allowed_tokens
+
     def _has_finished_path(self,
                            active_paths: list[tuple[int, list[int]]]) -> bool:
         return any(not path[1] for path in active_paths)
@@ -138,105 +148,18 @@ class Generator:
             current_fixed_path = current_fixed_path[1:]
 
             if not current_fixed_path:
-                state = States.PARAMS
+                state = States.PARAM_NAME
 
-        if state == States.PARAMS:
+        if state == States.PARAM_NAME:
             selected_funct: FunctionDefinition = self.functions[
                 self._selected_func(active_paths)]
 
+            param_tokens_path: list[tuple[str, list[int]]] = []
+            for param_name in selected_funct.parameters:
+                param_name_tokens: list[int] = self.llm.encode(param_name)[
+                    0].tolist()
+                param_tokens_path.append((param_name, param_name_tokens))
+
+            allowed_tokens = self._get_allowed_param_tokens(param_tokens_path)
+
         return self.llm.decode(input_ids)
-
-    # def old_generate(self, prompt: str, max_tokens: int = 200) -> str:
-    #     """Generate a constrained function call based on the prompt.
-
-    #     Args:
-    #         prompt (str): The natural language input from the user.
-    #         max_tokens (int): The maximum number of tokens to generate.
-    #     Returns:
-    #         str: A raw string containing the generated JSON.
-    #     """
-    #     input_ids_tensor: Any = self.llm.encode(prompt)
-    #     original_prompt_id: list[int] = input_ids_tensor[0].tolist()
-    #     prompt_length: int = len(original_prompt_id)
-    #     input_ids: list[int] = input_ids_tensor[0].tolist()
-
-    #     open_brackets: int = 0
-    #     current_state: int = 0
-
-    #     id_key: int = self.vocab["{"]
-    #     ids_name_key: list[int] = self.llm.encode('\n "name": ')[0].tolist()
-    #     name_pointer: int = 0
-
-    #     ids_params_key: list[int] = self.llm.encode(
-    #         '\n "parameters": {')[0].tolist()
-    #     params_pointer: int = 0
-
-    #     active_paths: list[list[int]] = [
-    #         path.copy() for path in self.fn_token_paths
-    #     ]
-
-    #     for _ in range(max_tokens):
-    #         logits: list[float] = self.llm.get_logits_from_input_ids(input_ids)
-    #         logits_array = np.array(logits)
-    #         if current_state == 0:
-    #             mask = np.full_like(logits, -np.inf)
-    #             mask[id_key] = 0.0
-    #             logits_array = mask
-
-    #         elif current_state == 1:
-    #             mask2 = np.full_like(logits, -np.inf)
-    #             mask2[ids_name_key[name_pointer]] = 0
-    #             logits_array = mask2
-
-    #         elif current_state == 2:
-    #             mask3 = np.full_like(logits, -np.inf)
-    #             for path in active_paths:
-    #                 mask3[path[0]] = logits_array[path[0]]
-
-    #             logits_array = mask3
-
-    #         elif current_state == 3:
-    #             mask4 = np.full_like(logits, -np.inf)
-    #             mask4[ids_params_key[params_pointer]] = 0.0
-    #             logits_array = mask4
-
-    #         next_token_id: int = int(np.argmax(logits_array))
-    #         token_text: str = self.llm.decode([next_token_id])
-
-    #         open_brackets = open_brackets + token_text.count('{')
-    #         open_brackets = open_brackets - token_text.count('}')
-    #         input_ids.append(next_token_id)
-
-    #         if current_state == 0:
-    #             if "{" in token_text:
-    #                 current_state = 1
-
-    #         elif current_state == 1:
-    #             name_pointer = name_pointer + 1
-    #             if name_pointer == len(ids_name_key):
-    #                 current_state = 2
-
-    #         elif current_state == 2:
-    #             new_paths: list[list[int]] = []
-
-    #             for path in active_paths:
-    #                 if path[0] == next_token_id:
-    #                     new_paths.append(path[1:])
-
-    #             active_paths = new_paths
-
-    #             if len(active_paths[0]) == 0:
-    #                 current_state = 3
-
-    #         elif current_state == 3:
-    #             params_pointer = params_pointer + 1
-
-    #             if params_pointer == len(ids_params_key):
-    #                 current_state = 4
-
-    #         if current_state > 0 and open_brackets == 0:
-    #             break
-
-    #     generated_ids: list[int] = input_ids[prompt_length:]
-
-    #     return str(self.llm.decode(generated_ids))
