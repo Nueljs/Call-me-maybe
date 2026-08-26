@@ -63,17 +63,6 @@ class Generator:
 
         return new_active_paths
 
-    def _advance_param_paths(self,
-                             active_param_paths: list[tuple[str, list[int]]],
-                             token: int) -> list[tuple[str, list[int]]]:
-        new_param_paths: list[tuple[str, list[int]]] = []
-
-        for path in active_param_paths:
-            if path[1] and path[1][0] == token:
-                new_param_paths.append((path[0], path[1][1:]))
-
-        return new_param_paths
-
     def _get_allowed_tokens(self, state: States,
                             active_paths: list[
                                 tuple[int, list[int]]] | None = None
@@ -167,16 +156,7 @@ class Generator:
             selected_funct: FunctionDefinition = self.functions[
                 self._selected_func(active_paths)]
 
-            param_tokens_path: list[tuple[str, list[int]]] = []
-            for param_name in selected_funct.parameters:
-                param_name_tokens: list[int] = self.llm.encode(param_name)[
-                    0].tolist()
-                param_tokens_path.append((param_name, param_name_tokens))
-
-            allowed_tokens = self._get_allowed_param_tokens(param_tokens_path)
-            next_token = self._get_next_token(input_ids, allowed_tokens)
-            input_ids.append(next_token)
-            param_tokens_path = self._advance_param_paths(
-                param_tokens_path, next_token)
+            for param_name, param_schema in selected_funct.parameters.items():
+                
 
         return self.llm.decode(input_ids)
