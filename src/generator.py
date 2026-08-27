@@ -95,6 +95,46 @@ class Generator:
                            active_paths: list[tuple[int, list[int]]]) -> bool:
         return any(not path[1] for path in active_paths)
 
+    def _get_number_tokens(self) -> set[int]:
+        tokens: set[int] = set()
+
+        for token_text, token_id in self.vocab.items():
+            if token_text.isdigit():
+                tokens.add(token_id)
+
+        return tokens
+
+    def _generate_number(self,
+                         input_ids: list[int],
+                         value_start: int) -> list[int]:
+        allowed_tokens: set[int] = self._get_number_tokens()
+
+        next_token: int = self._get_next_token(
+            input_ids,
+            allowed_tokens
+        )
+
+        return [next_token]
+
+    def _generate_string(self, input_ids: list[int], value_start: int) -> list[int]:
+        pass
+
+    def _generate_boolean(self, input_ids: list[int], value_start: int) -> list[int]:
+        pass
+
+    def _generate_value(self,
+                        param_type: str,
+                        input_ids: list[int],
+                        value_start: int) -> list[int]:
+        if param_type == "number":
+            return self._generate_number(input_ids, value_start)
+        elif param_type == "string":
+            return self._generate_string(input_ids, value_start)
+        elif param_type == "boolean":
+            return self._generate_boolean(input_ids, value_start)
+
+        raise ValueError(f"Unsupported parameter type: {param_type}")
+
     def _get_next_token(self, input_ids: list[int],
                         allowed_tokens: set[int]) -> int:
         logits: list[float] = self.llm.get_logits_from_input_ids(input_ids)
@@ -156,7 +196,31 @@ class Generator:
             selected_funct: FunctionDefinition = self.functions[
                 self._selected_func(active_paths)]
 
-            for param_name, param_schema in selected_funct.parameters.items():
-                
+            total_parameters: int = len(selected_funct.parameters)
+            for index, (param_name, param_schema) in enumerate(
+                    selected_funct.parameters.items()):
+                param_name_tokens: list[int] = self.llm.encode(
+                    f'"{param_name}": ')[0].tolist()
+
+                input_ids.extend(param_name_tokens)
+
+                param_type: str = param_schema["type"]
+                value_start: int = len(input_ids)
+
+                value_tokens: list[int] = self._generate_value(
+                    param_type,
+                    input_ids,
+                    value_start
+                )
+
+                if index < total_parameters - 1:
+                    input_ids.extend(
+                        self.llm.encode(", ")[0].tolist()
+                    )
+                else:
+                    input_ids.extend(
+                        self.llm.encode("}")[0].tolist()
+                    )
+                input_ids.extend(value_tokens)
 
         return self.llm.decode(input_ids)
