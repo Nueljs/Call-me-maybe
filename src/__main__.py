@@ -1,27 +1,44 @@
 import argparse
-from .schemas import DataLoader, TestPrompt, FunctionDefinition, OutputResult
+import json
+import os
+
+import numpy as np
+
+from typing import Any
+
+from .schemas import (
+    DataLoader,
+    TestPrompt,
+    FunctionDefinition,
+    OutputResult
+)
 from llm_sdk import Small_LLM_Model  # type: ignore
 from .prompt_builder import build_context
 from .generator import Generator
-import json
-import os
-from typing import Any
 
 
 def main() -> None:
     """Execute the main flow of the prompt processing pipeline."""
     parser = argparse.ArgumentParser(description='Processing args')
     parser.add_argument(
-        '--input', type=str, default="data/input/function_calling_tests.json",
-        help='The input file')
+        '--input',
+        type=str,
+        default="data/input/function_calling_tests.json",
+        help='The input file'
+    )
     parser.add_argument(
-        '--output', type=str,
+        '--output',
+        type=str,
         default="data/output/function_calling_results.json",
-        help='The output file')
+        help='The output file'
+    )
     parser.add_argument(
-        '--functions_definition', type=str,
+        '--functions_definition',
+        type=str,
         default="data/input/functions_definition.json",
-        help='The functions file')
+        help='The functions file'
+    )
+
     args = parser.parse_args()
 
     input_path: str = str(args.input)
@@ -41,6 +58,22 @@ def main() -> None:
 
     for prompt_item in prompts:
         final_text = build_context(functions, prompt_item.prompt)
+
+        # Prueba temporal: generación libre sin constrained decoding
+        if "Replace all numbers" in prompt_item.prompt:
+            input_ids: list[int] = llm.encode(final_text)[0].tolist()
+
+            print("\n--- FREE GENERATION ---")
+
+            for _ in range(150):
+                logits: list[float] = llm.get_logits_from_input_ids(
+                    input_ids
+                )
+                next_token: int = int(np.argmax(np.array(logits)))
+                input_ids.append(next_token)
+
+                print(repr(llm.decode(next_token)))
+
         result_str: str = generator.generate(final_text)
 
         try:
@@ -54,15 +87,22 @@ def main() -> None:
 
             final_result.append(final_obj.model_dump())
 
-            print(f"Processed: '{prompt_item.prompt}' ->"
-                  f" {generated_dict['name']}")
+            print(
+                f"Processed: '{prompt_item.prompt}' -> "
+                f"{generated_dict['name']}"
+            )
+
         except json.JSONDecodeError:
-            print(f"Error processing the prompt: '{prompt_item.prompt}'")
+            print(
+                f"Error processing the prompt: '{prompt_item.prompt}'"
+            )
             print(f"Raw-text: {result_str}")
+
         except Exception as e:
             print(
-                f"Validation error in the prompt: '{prompt_item.prompt}' - "
-                f"{e}")
+                f"Validation error in the prompt: "
+                f"'{prompt_item.prompt}' - {e}"
+            )
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 

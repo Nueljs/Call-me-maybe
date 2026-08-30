@@ -1,6 +1,5 @@
 import json
 import numpy as np
-from typing import Any
 from llm_sdk import Small_LLM_Model  # type: ignore
 from .schemas import FunctionDefinition
 from enum import Enum
@@ -95,6 +94,15 @@ class Generator:
                            active_paths: list[tuple[int, list[int]]]) -> bool:
         return any(not path[1] for path in active_paths)
 
+    def _get_number_end_tokens(self) -> set[int]:
+        tokens: set[int] = set()
+
+        for token_text, token_id in self.vocab.items():
+            if token_text.strip() in {",", "}"}:
+                tokens.add(token_id)
+
+        return tokens
+
     def _get_number_tokens(self) -> set[int]:
         tokens: set[int] = set()
 
@@ -104,34 +112,119 @@ class Generator:
 
         return tokens
 
+    def _get_string_tokens(self) -> set[int]:
+        tokens: set[int] = set()
+
+        for token_text, token_id in self.vocab.items():
+            if '"' not in token_text and '\\' not in token_text:
+                tokens.add(token_id)
+
+        return tokens
+
     def _generate_number(self,
                          input_ids: list[int],
                          value_start: int) -> list[int]:
-        allowed_tokens: set[int] = self._get_number_tokens()
 
-        next_token: int = self._get_next_token(
-            input_ids,
-            allowed_tokens
-        )
+        value_tokens: list[int] = []
 
-        return [next_token]
+        number_tokens: set[int] = self._get_number_tokens()
+        end_tokens: set[int] = self._get_number_end_tokens()
 
-    def _generate_string(self, input_ids: list[int], value_start: int) -> list[int]:
-        pass
+        while True:
+            allowed_tokens: set[int] = number_tokens.copy()
 
-    def _generate_boolean(self, input_ids: list[int], value_start: int) -> list[int]:
-        pass
+            if value_tokens:
+                allowed_tokens.update(end_tokens)
+
+            next_token: int = self._get_next_token(
+                input_ids + value_tokens,
+                allowed_tokens
+            )
+
+            if next_token in end_tokens:
+                break
+
+            value_tokens.append(next_token)
+
+        return value_tokens
+
+    def _generate_string(
+        self,
+        input_ids: list[int],
+        value_start: int,
+        max_tokens: int
+    ) -> list[int]:
+        value_tokens: list[int] = []
+
+        quote_token: int = self.vocab['"']
+        value_tokens.append(quote_token)
+
+        for _ in range(max_tokens):
+            content_tokens: set[int] = self._get_string_tokens()
+
+            logits: list[float] = self.llm.get_logits_from_input_ids(
+                input_ids + value_tokens
+            )
+            logits_array = np.array(logits)
+
+            quote_logit: float = float(logits_array[quote_token])
+
+            best_content_token: int = max(
+                content_tokens,
+                key=lambda token_id: logits_array[token_id]
+            )
+
+            best_content_logit: float = float(
+                logits_array[best_content_token]
+            )
+
+            print(
+                "CURRENT:",
+                repr(
+                    self.llm.decode(
+                        input_ids[value_start:] + value_tokens
+                    )
+                )
+            )
+            print("QUOTE:", quote_logit)
+            print(
+                "BEST CONTENT:",
+                repr(self.llm.decode(best_content_token)),
+                best_content_logit
+            )
+
+            allowed_tokens: set[int] = content_tokens | {quote_token}
+
+            next_token: int = max(
+                allowed_tokens,
+                key=lambda token_id: logits_array[token_id]
+            )
+
+            value_tokens.append(next_token)
+
+            print("TOKEN:", repr(self.llm.decode(next_token)))
+
+            if next_token == quote_token:
+                return value_tokens
+
+        raise ValueError("String did not close within max_tokens")
+
+    # def _generate_boolean(self,
+    #                       input_ids: list[int],
+    #                       value_start: int) -> list[int]:
+    #     pass
 
     def _generate_value(self,
                         param_type: str,
                         input_ids: list[int],
-                        value_start: int) -> list[int]:
+                        value_start: int,
+                        max_tokens: int) -> list[int]:
         if param_type == "number":
             return self._generate_number(input_ids, value_start)
         elif param_type == "string":
-            return self._generate_string(input_ids, value_start)
-        elif param_type == "boolean":
-            return self._generate_boolean(input_ids, value_start)
+            return self._generate_string(input_ids, value_start, max_tokens)
+        # elif param_type == "boolean":
+        #     return self._generate_boolean(input_ids, value_start)
 
         raise ValueError(f"Unsupported parameter type: {param_type}")
 
@@ -148,7 +241,7 @@ class Generator:
 
     def generate(self,
                  prompt: str,
-                 max_tokens: int = 200) -> str:
+                 max_tokens: int = 20) -> str:
 
         state: States = States.START
         input_ids: list[int] = self.llm.encode(prompt)[0].tolist()
@@ -179,7 +272,6 @@ class Generator:
             next_token = self._get_next_token(input_ids, allowed_tokens)
             input_ids.append(next_token)
             active_paths = self._advance_func_paths(active_paths, next_token)
-            print(active_paths)
 
             if self._has_finished_path(active_paths):
                 state = States.PARAM_KEY
@@ -210,8 +302,11 @@ class Generator:
                 value_tokens: list[int] = self._generate_value(
                     param_type,
                     input_ids,
-                    value_start
+                    value_start,
+                    max_tokens
                 )
+
+                input_ids.extend(value_tokens)
 
                 if index < total_parameters - 1:
                     input_ids.extend(
@@ -221,6 +316,5 @@ class Generator:
                     input_ids.extend(
                         self.llm.encode("}")[0].tolist()
                     )
-                input_ids.extend(value_tokens)
 
         return self.llm.decode(input_ids)
