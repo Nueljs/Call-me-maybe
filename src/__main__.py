@@ -2,8 +2,6 @@ import argparse
 import json
 import os
 
-import numpy as np
-
 from typing import Any
 
 from .schemas import (
@@ -58,22 +56,6 @@ def main() -> None:
 
     for prompt_item in prompts:
         final_text = build_context(functions, prompt_item.prompt)
-
-        # Prueba temporal: generación libre sin constrained decoding
-        if "Replace all numbers" in prompt_item.prompt:
-            input_ids: list[int] = llm.encode(final_text)[0].tolist()
-
-            print("\n--- FREE GENERATION ---")
-
-            for _ in range(150):
-                logits: list[float] = llm.get_logits_from_input_ids(
-                    input_ids
-                )
-                next_token: int = int(np.argmax(np.array(logits)))
-                input_ids.append(next_token)
-
-                print(repr(llm.decode(next_token)))
-
         result_str: str = generator.generate(final_text)
 
         try:
