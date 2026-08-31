@@ -6,6 +6,8 @@ import numpy as np
 from llm_sdk import Small_LLM_Model  # type: ignore
 from .schemas import FunctionDefinition
 
+from .string_decoder import StringDecoder
+
 
 class States(Enum):
     START = 1
@@ -28,6 +30,7 @@ class Generator:
         """Initialize the Generator with the LLM and target functions."""
         self.llm: Small_LLM_Model = llm
         self.vocab: dict[str, int] = self._load_vocab()
+        self.string_decoder: StringDecoder = StringDecoder(self.vocab)
         self.functions: list[FunctionDefinition] = functions
 
         self.functions_names: list[str] = [
@@ -134,16 +137,6 @@ class Generator:
 
         return tokens
 
-    def _get_string_tokens(self) -> set[int]:
-        """Return tokens allowed inside a basic string."""
-        tokens: set[int] = set()
-
-        for token_text, token_id in self.vocab.items():
-            if '"' not in token_text and "\\" not in token_text:
-                tokens.add(token_id)
-
-        return tokens
-
     def _generate_number(
         self,
         input_ids: list[int],
@@ -173,39 +166,6 @@ class Generator:
 
         return value_tokens
 
-    def _generate_string(
-        self,
-        input_ids: list[int],
-        value_start: int,
-        max_tokens: int,
-    ) -> list[int]:
-        """Generate a basic string value."""
-        value_tokens: list[int] = []
-
-        quote_token: int = self.vocab['"']
-        value_tokens.append(quote_token)
-
-        for _ in range(max_tokens):
-            content_tokens: set[int] = self._get_string_tokens()
-
-            allowed_tokens: set[int] = content_tokens | {
-                quote_token
-            }
-
-            next_token: int = self._get_next_token(
-                input_ids + value_tokens,
-                allowed_tokens,
-            )
-
-            value_tokens.append(next_token)
-
-            if next_token == quote_token:
-                return value_tokens
-
-        raise ValueError(
-            "String did not close within max_tokens"
-        )
-
     def _generate_value(
         self,
         param_type: str,
@@ -221,9 +181,9 @@ class Generator:
             )
 
         if param_type == "string":
-            return self._generate_string(
+            return self.string_decoder.generate(
+                self.llm,
                 input_ids,
-                value_start,
                 max_tokens,
             )
 
@@ -252,7 +212,7 @@ class Generator:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 20,
+        max_tokens: int = 100,
     ) -> str:
         """Generate a constrained function call."""
         state: States = States.START
@@ -334,10 +294,6 @@ class Generator:
 
                 param_type: str = param_schema["type"]
                 value_start: int = len(input_ids)
-
-                print("PARAM:", param_name)
-                print("SCHEMA:", param_schema)
-                print("TYPE:", param_type)
 
                 value_tokens: list[int] = self._generate_value(
                     param_type,
