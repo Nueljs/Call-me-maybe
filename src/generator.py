@@ -212,78 +212,86 @@ class Generator:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 100,
+        max_tokens: int = 40,
     ) -> str:
         """Generate a constrained function call."""
         state: States = States.START
+
         input_ids: list[int] = (
             self.llm.encode(prompt)[0].tolist()
         )
 
-        allowed_tokens: set[int] = self._get_allowed_tokens(state)
-        next_token: int = self._get_next_token(
-            input_ids,
-            allowed_tokens,
-        )
-        input_ids.append(next_token)
-
-        state = States.NAME_KEY
-        current_fixed_path: list[int] = self.name_key.copy()
-
-        while state == States.NAME_KEY:
-            input_ids.append(current_fixed_path[0])
-            current_fixed_path = current_fixed_path[1:]
-
-            if not current_fixed_path:
-                state = States.FUNC_NAME
+        generation_start: int = len(input_ids)
 
         active_paths: list[tuple[int, list[int]]] = [
             (index, path.copy())
             for index, path in self.fn_token_paths
         ]
 
-        while state == States.FUNC_NAME:
-            allowed_tokens = self._get_allowed_tokens(
-                state,
-                active_paths,
-            )
+        selected_funct: FunctionDefinition | None = None
+        parameters: list[tuple[str, dict[str, str]]] = []
+        current_param_index: int = 0
 
-            next_token = self._get_next_token(
-                input_ids,
-                allowed_tokens,
-            )
+        while state != States.END:
 
-            input_ids.append(next_token)
+            if state == States.START:
+                allowed_tokens: set[int] = (
+                    self._get_allowed_tokens(state)
+                )
 
-            active_paths = self._advance_func_paths(
-                active_paths,
-                next_token,
-            )
+                next_token: int = self._get_next_token(
+                    input_ids,
+                    allowed_tokens,
+                )
 
-            if self._has_finished_path(active_paths):
-                state = States.PARAM_KEY
+                input_ids.append(next_token)
 
-        current_fixed_path = self.param_key.copy()
+                state = States.NAME_KEY
 
-        while state == States.PARAM_KEY:
-            input_ids.append(current_fixed_path[0])
-            current_fixed_path = current_fixed_path[1:]
+            elif state == States.NAME_KEY:
+                input_ids.extend(self.name_key)
 
-            if not current_fixed_path:
+                state = States.FUNC_NAME
+
+            elif state == States.FUNC_NAME:
+                allowed_tokens = self._get_allowed_tokens(
+                    state,
+                    active_paths,
+                )
+
+                next_token = self._get_next_token(
+                    input_ids,
+                    allowed_tokens,
+                )
+
+                input_ids.append(next_token)
+
+                active_paths = self._advance_func_paths(
+                    active_paths,
+                    next_token,
+                )
+
+                if self._has_finished_path(active_paths):
+                    selected_funct = self.functions[
+                        self._selected_func(active_paths)
+                    ]
+
+                    parameters = list(
+                        selected_funct.parameters.items()
+                    )
+
+                    state = States.PARAM_KEY
+
+            elif state == States.PARAM_KEY:
+                input_ids.extend(self.param_key)
+
                 state = States.PARAM_NAME
 
-        if state == States.PARAM_NAME:
-            selected_funct: FunctionDefinition = self.functions[
-                self._selected_func(active_paths)
-            ]
+            elif state == States.PARAM_NAME:
+                param_name, _ = parameters[
+                    current_param_index
+                ]
 
-            total_parameters: int = len(
-                selected_funct.parameters
-            )
-
-            for index, (param_name, param_schema) in enumerate(
-                selected_funct.parameters.items()
-            ):
                 param_name_tokens: list[int] = (
                     self.llm.encode(
                         f'"{param_name}": '
@@ -292,25 +300,42 @@ class Generator:
 
                 input_ids.extend(param_name_tokens)
 
+                state = States.PARAM_VALUE
+
+            elif state == States.PARAM_VALUE:
+                param_name, param_schema = parameters[
+                    current_param_index
+                ]
+
                 param_type: str = param_schema["type"]
+
                 value_start: int = len(input_ids)
 
-                value_tokens: list[int] = self._generate_value(
-                    param_type,
-                    input_ids,
-                    value_start,
-                    max_tokens,
+                value_tokens: list[int] = (
+                    self._generate_value(
+                        param_type,
+                        input_ids,
+                        value_start,
+                        max_tokens,
+                    )
                 )
 
                 input_ids.extend(value_tokens)
 
-                if index < total_parameters - 1:
+                current_param_index += 1
+
+                if current_param_index < len(parameters):
                     input_ids.extend(
                         self.llm.encode(", ")[0].tolist()
                     )
-                else:
-                    input_ids.extend(
-                        self.llm.encode("}")[0].tolist()
-                    )
 
-        return self.llm.decode(input_ids)
+                    state = States.PARAM_NAME
+
+                else:
+                    state = States.END
+
+        input_ids.extend(
+            self.llm.encode("}}")[0].tolist()
+        )
+
+        return self.llm.decode(input_ids[generation_start:])

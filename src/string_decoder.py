@@ -144,4 +144,4 @@ class StringDecoder:
             if state == StringState.CLOSED:
                 return value_tokens
 
-        raise ValueError("String did not close within max_tokens")
+        return value_tokens
