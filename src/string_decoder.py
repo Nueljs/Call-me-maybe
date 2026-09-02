@@ -113,8 +113,11 @@ class StringDecoder:
 
         state: StringState = StringState.CONTENT
 
-        for _ in range(max_tokens):
-            allowed_tokens: set[int] = self._get_allowed_tokens(state)
+        for token_index in range(max_tokens):
+            if token_index == max_tokens - 1:
+                allowed_tokens: set[int] = {quote_token}
+            else:
+                allowed_tokens = self._get_allowed_tokens(state)
 
             logits: list[float] = llm.get_logits_from_input_ids(
                 input_ids + value_tokens
@@ -144,4 +147,4 @@ class StringDecoder:
             if state == StringState.CLOSED:
                 return value_tokens
 
-        return value_tokens
+        raise ValueError("JSON can't be completed with that number of tokens")

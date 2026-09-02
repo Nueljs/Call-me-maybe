@@ -30,6 +30,10 @@ class Generator:
         """Initialize the Generator with the LLM and target functions."""
         self.llm: Small_LLM_Model = llm
         self.vocab: dict[str, int] = self._load_vocab()
+        self.token_texts: dict[int, str] = {
+            token_id: token_text
+            for token_text, token_id in self.vocab.items()
+        }
         self.string_decoder: StringDecoder = StringDecoder(self.vocab)
         self.functions: list[FunctionDefinition] = functions
 
@@ -42,6 +46,12 @@ class Generator:
         for index, fn_name in enumerate(self.functions_names):
             tokens = self.llm.encode(fn_name)[0].tolist()
             self.fn_token_paths.append((index, tokens))
+
+        self.bool_token_paths: list[tuple[str, list[int]]] = []
+
+        for value in ("true", "false"):
+            tokens = self.llm.encode(value)[0].tolist()
+            self.bool_token_paths.append((value, tokens))
 
         self.name_key: list[int] = self.llm.encode(
             '\n "name": '
@@ -140,16 +150,24 @@ class Generator:
     def _generate_number(
         self,
         input_ids: list[int],
-        value_start: int,
     ) -> list[int]:
-        """Generate a numeric value."""
-        value_tokens: list[int] = []
-
         number_tokens: set[int] = self._get_number_tokens()
         end_tokens: set[int] = self._get_number_end_tokens()
 
+        value_tokens: list[int] = []
+        has_dot: bool = False
+
+        minus_token: int = self.vocab["-"]
+        dot_token: int = self.vocab["."]
+
         while True:
             allowed_tokens: set[int] = number_tokens.copy()
+
+            if not value_tokens:
+                allowed_tokens.add(minus_token)
+
+            if value_tokens and not has_dot:
+                allowed_tokens.add(dot_token)
 
             if value_tokens:
                 allowed_tokens.update(end_tokens)
@@ -162,23 +180,63 @@ class Generator:
             if next_token in end_tokens:
                 break
 
+            token_text: str = self.token_texts[next_token]
+
+            if "." in token_text:
+                has_dot = True
+
             value_tokens.append(next_token)
 
         return value_tokens
+
+    def _generate_boolean(
+        self,
+        input_ids: list[int],
+    ) -> list[int]:
+        """Generate a constrained boolean value."""
+        active_paths: list[tuple[str, list[int]]] = [
+            (value, path.copy())
+            for value, path in self.bool_token_paths
+        ]
+
+        value_tokens: list[int] = []
+
+        while True:
+            allowed_tokens: set[int] = {
+                path[1][0]
+                for path in active_paths
+                if path[1]
+            }
+
+            next_token: int = self._get_next_token(
+                input_ids + value_tokens,
+                allowed_tokens,
+            )
+
+            value_tokens.append(next_token)
+
+            new_active_paths: list[tuple[str, list[int]]] = []
+
+            for value, path in active_paths:
+                if path and path[0] == next_token:
+                    new_active_paths.append(
+                        (value, path[1:])
+                    )
+
+            active_paths = new_active_paths
+
+            if any(not path for _, path in active_paths):
+                return value_tokens
 
     def _generate_value(
         self,
         param_type: str,
         input_ids: list[int],
-        value_start: int,
         max_tokens: int,
     ) -> list[int]:
         """Generate a value according to its declared type."""
         if param_type == "number":
-            return self._generate_number(
-                input_ids,
-                value_start,
-            )
+            return self._generate_number(input_ids)
 
         if param_type == "string":
             return self.string_decoder.generate(
@@ -186,6 +244,9 @@ class Generator:
                 input_ids,
                 max_tokens,
             )
+
+        if param_type == "boolean":
+            return self._generate_boolean(input_ids)
 
         raise ValueError(
             f"Unsupported parameter type: {param_type}"
@@ -212,7 +273,7 @@ class Generator:
     def generate(
         self,
         prompt: str,
-        max_tokens: int = 40,
+        max_tokens: int = 31,
     ) -> str:
         """Generate a constrained function call."""
         state: States = States.START
@@ -309,13 +370,10 @@ class Generator:
 
                 param_type: str = param_schema["type"]
 
-                value_start: int = len(input_ids)
-
                 value_tokens: list[int] = (
                     self._generate_value(
                         param_type,
                         input_ids,
-                        value_start,
                         max_tokens,
                     )
                 )
