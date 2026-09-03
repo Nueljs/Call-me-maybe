@@ -396,4 +396,4 @@ class Generator:
             self.llm.encode("}}")[0].tolist()
         )
 
-        return self.llm.decode(input_ids[generation_start:])
+        return str(self.llm.decode(input_ids[generation_start:]))
