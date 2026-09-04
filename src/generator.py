@@ -148,9 +148,10 @@ class Generator:
         return tokens
 
     def _generate_number(
-        self,
-        input_ids: list[int],
-    ) -> list[int]:
+            self,
+            input_ids: list[int],
+            allow_decimal: bool
+         ) -> list[int]:
         number_tokens: set[int] = self._get_number_tokens()
         end_tokens: set[int] = self._get_number_end_tokens()
 
@@ -166,7 +167,7 @@ class Generator:
             if not value_tokens:
                 allowed_tokens.add(minus_token)
 
-            if value_tokens and not has_dot:
+            if value_tokens and allow_decimal and not has_dot:
                 allowed_tokens.add(dot_token)
 
             if value_tokens:
@@ -187,7 +188,12 @@ class Generator:
 
             value_tokens.append(next_token)
 
-        return value_tokens
+        number_text: str = self.llm.decode(value_tokens).strip()
+
+        if allow_decimal and "." not in number_text:
+            number_text += ".0"
+
+        return self.llm.encode(number_text)[0].tolist()
 
     def _generate_boolean(
         self,
@@ -235,8 +241,11 @@ class Generator:
         max_tokens: int,
     ) -> list[int]:
         """Generate a value according to its declared type."""
-        if param_type == "number":
-            return self._generate_number(input_ids)
+        if param_type == "integer":
+            return self._generate_number(input_ids, False)
+
+        if param_type in {"number", "float"}:
+            return self._generate_number(input_ids, True)
 
         if param_type == "string":
             return self.string_decoder.generate(
