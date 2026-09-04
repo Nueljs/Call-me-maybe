@@ -289,6 +289,9 @@ class Generator:
             for index, path in self.fn_token_paths
         ]
 
+        if not active_paths:
+            raise ValueError("No matching function found")
+
         selected_funct: FunctionDefinition | None = None
         parameters: list[tuple[str, dict[str, str]]] = []
         current_param_index: int = 0

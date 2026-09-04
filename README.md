@@ -1,45 +1,383 @@
-*This project has been created as part of the 42 curriculum by macerver.*
+*This project has been created as part of the 42 curriculum by macerver*
+
+# Call Me Maybe
 
 ## Description
 
-**call-me-maybe** is a function calling tool that turns natural language prompts into structured, machine-executable function calls, without relying on the LLM spontaneously producing valid JSON.
+Call Me Maybe is a function calling project focused on using a small language model to translate natural language requests into structured function calls.
 
-Given a prompt like `"What is the sum of 2 and 3?"`, the program does not answer `5`. Instead it selects the correct function from a provided catalog and extracts its arguments, producing:
+The project uses the **Qwen/Qwen3-0.6B** model and constrained decoding to generate JSON function calls based on a set of available function definitions.
+
+For example, given:
+
+> What is the sum of 2 and 3?
+
+the program should generate a structured call such as:
 
 ```json
-{"name": "fn_add_numbers", "parameters": {"a": 2.0, "b": 3.0}}
+{
+  "name": "fn_add_numbers",
+  "parameters": {
+    "a": 2,
+    "b": 3
+  }
+}
 ```
 
-The core problem this project solves is that small language models (here, `Qwen/Qwen3-0.6B`) are unreliable at producing valid JSON on their own. Instead of prompting-and-hoping, this project uses **constrained decoding**: at every generation step, the raw logits returned by the model are masked so that only tokens consistent with the required JSON structure can be selected. This guarantees syntactically valid, schema-compliant output on every run, regardless of how well the model "wants" to cooperate.
+The main goal of the project is not to obtain the final answer to the user's question, but to determine **which function should be called and which arguments should be passed to it**.
 
-## Instructions
+The implementation uses token-level constrained decoding to restrict the language model to valid outputs instead of relying only on prompting.
 
-### Requirements
+---
 
-- Python 3.14
-- [uv](https://docs.astral.sh/uv/) for dependency and environment management
+## Features
 
-### Installation
+* Natural language to structured function calling.
+* Constrained token generation using the model vocabulary.
+* Function selection based on the available function definitions.
+* Support for:
 
-```bash
-make install
+  * `number`
+  * `string`
+  * `boolean`
+* JSON output generation.
+* Validation of input data using Pydantic.
+* Error handling for invalid or missing input files.
+* Reproducible execution using the provided LLM SDK and Qwen3-0.6B model.
+
+---
+
+## Algorithm Explanation
+
+The generation process starts by building a prompt containing:
+
+1. The available function definitions.
+2. The user's natural language request.
+3. An instruction asking the model to generate a JSON function call.
+
+The prompt is then tokenized and passed to the LLM.
+
+Instead of allowing the model to freely generate any token, the `Generator` restricts the possible next tokens depending on the current generation state.
+
+The main generation states are:
+
+```text
+START
+  ↓
+NAME_KEY
+  ↓
+FUNC_NAME
+  ↓
+PARAM_KEY
+  ↓
+PARAM_NAME
+  ↓
+PARAM_VALUE
+  ↓
+END
 ```
 
-This runs `uv sync`, which creates a virtual environment and installs all dependencies, including the local `llm_sdk` workspace package.
+### Function selection
 
-### Running
+Available function names are tokenized in advance.
 
-```bash
-make run
+During the `FUNC_NAME` state, only tokens that belong to one of the valid function-name token paths are allowed.
+
+The model therefore still decides which function to select using its logits, but it cannot generate a function name that does not exist in the provided definitions.
+
+### Parameter generation
+
+After selecting a function, its parameters are read from the corresponding function definition.
+
+Each parameter is generated according to its declared type.
+
+#### Numbers
+
+Numbers are generated using a restricted token set containing numeric tokens.
+
+The implementation also supports:
+
+* an optional `-` at the beginning;
+* one optional decimal point.
+
+Scientific notation such as `1e5` is intentionally not handled in the current implementation.
+
+Examples:
+
+```text
+2
+-15
+12.5
+-3.14
 ```
 
-which is equivalent to:
+#### Booleans
+
+Boolean values are generated using two valid token paths:
+
+```text
+true
+false
+```
+
+The model selects between these two possibilities using the logits produced by the LLM.
+
+#### Strings
+
+String generation is handled by a dedicated `StringDecoder`.
+
+The decoder uses a finite-state machine to control valid JSON string contents.
+
+The main states are:
+
+```text
+CONTENT
+ESCAPE
+UNICODE_1
+UNICODE_2
+UNICODE_3
+UNICODE_4
+CLOSED
+```
+
+This allows the decoder to handle normal characters, JSON escape sequences and Unicode escape sequences while preventing invalid string syntax.
+
+A maximum generation length is also used to guarantee that string generation eventually terminates. When the limit is reached, the closing quote is forced.
+
+### Token selection
+
+At every generation step:
+
+1. The LLM produces logits for the next token.
+2. The decoder determines which tokens are valid in the current state.
+3. Invalid tokens are ignored.
+4. The valid token with the highest logit is selected.
+5. The token is appended to the generated sequence.
+6. The process continues until the required structure is complete.
+
+This approach combines the language model's ability to interpret the user's request with deterministic constraints that control the generated structure.
+
+---
+
+## Design Decisions
+
+### Use of constrained decoding
+
+The project relies on constrained decoding instead of expecting the model to produce perfectly structured JSON on its own.
+
+This is particularly important because the project uses a relatively small language model.
+
+### Separate handling for each parameter type
+
+Numbers, booleans and strings are generated using different strategies because each type has different structural constraints.
+
+This keeps the implementation simple while allowing each generator to focus on its own validation rules.
+
+### Function-name token paths
+
+Function names are tokenized ahead of time and represented as token paths.
+
+This allows the model to select between the available functions while guaranteeing that the generated function name belongs to the provided function definitions.
+
+### Dedicated string decoder
+
+Strings are more complex than numbers or booleans because they can contain escapes and Unicode sequences.
+
+For this reason, string generation is implemented separately using a finite-state machine.
+
+### Greedy token selection
+
+At each generation step, the token with the highest logit among the allowed tokens is selected.
+
+This keeps the implementation deterministic and avoids the additional complexity of sampling strategies.
+
+### Maximum string length
+
+A maximum token limit is used for string generation.
+
+If the model does not naturally decide to close a string, the closing quote is forced at the limit. This prevents endless generation loops and guarantees that the generation process terminates.
+
+---
+
+## Performance Analysis
+
+The implementation is designed to run on standard hardware using the Qwen3-0.6B model.
+
+### Accuracy
+
+During development, the provided test set was used to evaluate:
+
+* function selection;
+* number extraction;
+* string extraction;
+* boolean generation;
+* JSON structure.
+
+The current implementation successfully processes the complete provided test set and produces valid structured output for the tested cases.
+
+Some complex regex prompts can still result in semantically imperfect regular expressions because the language model may repeat patterns before reaching the generation limit.
+
+### Reliability
+
+The main objective of constrained decoding is structural reliability.
+
+The generator restricts token selection according to the expected JSON structure and parameter types, reducing the probability of malformed JSON.
+
+### Speed
+
+The model generates the response token by token and calculates logits for every generation step.
+
+This provides strong control over the generated structure, at the cost of additional inference time compared with unrestricted generation.
+
+The project is expected to process the provided test set within the required execution time on standard hardware.
+
+---
+
+## Challenges Faced
+
+### Small language model
+
+The Qwen3-0.6B model is relatively small and can sometimes produce repetitive or semantically imperfect outputs.
+
+This was especially noticeable when generating complex regular expressions.
+
+### Token-level constraints
+
+A major challenge was that tokens are not always equivalent to individual characters.
+
+A single token may represent multiple characters, which makes it necessary to reason about complete token contents rather than only individual characters.
+
+### String termination
+
+The language model does not always naturally decide when a string should end.
+
+In particular, regex generation could enter repetitive loops.
+
+A maximum token limit with a forced closing quote was introduced to guarantee termination and maintain valid JSON output.
+
+### Numbers
+
+Numbers required separate handling to prevent invalid sequences.
+
+The current implementation therefore allows numeric tokens, an optional leading minus sign, and one decimal point.
+
+### Boolean values
+
+Boolean generation required explicit token paths because `true` and `false` must be generated as valid JSON literals rather than quoted strings.
+
+---
+
+## Testing Strategy
+
+Testing was performed incrementally during development.
+
+The main test cases included:
+
+### Function selection
+
+Examples included:
+
+```text
+What is the sum of 2 and 3?
+Greet shrek
+Reverse the string 'hello'
+Calculate the square root of 144
+```
+
+### Numbers
+
+Tested values include:
+
+```text
+2
+265
+144
+```
+
+Additional numeric support was implemented for:
+
+```text
+-12
+12.5
+-3.14
+```
+
+### Strings
+
+Examples include:
+
+```text
+hello
+world
+Programming is fun
+The cat sat on the mat with another cat
+```
+
+### Regular expressions
+
+The implementation was tested with prompts involving:
+
+* replacing numbers;
+* replacing vowels;
+* replacing specific words.
+
+### Booleans
+
+A temporary test function was added during development:
+
+```json
+{
+  "name": "fn_check_status",
+  "description": "Check whether a system is active.",
+  "parameters": {
+    "active": {
+      "type": "boolean"
+    }
+  },
+  "returns": {
+    "type": "string"
+  }
+}
+```
+
+and tested with:
+
+```text
+Is the system active?
+```
+
+The generated result correctly produced a boolean value.
+
+### Static analysis
+
+The project was also checked using the required linting configuration.
+
+`make lint` currently passes successfully.
+
+---
+
+## Example Usage
+
+### Default execution
 
 ```bash
 uv run python -m src
 ```
 
-By default the program reads `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, and writes results to `data/output/function_calling_results.json`. All three paths can be overridden:
+By default, the program reads:
+
+```text
+data/input/function_calling_tests.json
+data/input/functions_definition.json
+```
+
+and writes:
+
+```text
+data/output/function_calling_results.json
+```
+
+### Custom input and output files
 
 ```bash
 uv run python -m src \
@@ -48,86 +386,151 @@ uv run python -m src \
   --output data/output/function_calling_results.json
 ```
 
-### Other Makefile targets
+### Makefile
 
-- `make debug` — runs the program under `pdb`
-- `make lint` — runs `flake8` and `mypy` (non-strict flags)
-- `make lint-strict` — runs `flake8` and `mypy --strict`
-- `make clean` — removes `__pycache__` and `.mypy_cache`
-
-## Algorithm Explanation
-
-Generation happens token by token inside `Generator.generate()`. Rather than letting the model choose freely, each step goes through a small state machine that tracks how much of the target JSON skeleton has been emitted, and masks the logits accordingly before picking the next token:
-
-1. **State 0 — open brace.** All logits are set to `-inf` except the token for `{`. The model is forced to open the JSON object.
-2. **State 1 — `"name": ` key.** The literal token sequence for `\n "name": ` is forced token-by-token, regardless of what the model would have preferred.
-3. **State 2 — function name selection.** This is the one truly "chosen" part of the process. Every function name from `functions_definition.json` is pre-encoded (as `"fn_name",`) into a token sequence, forming a set of candidate token paths (effectively a trie). At each step, only the *next* token of each still-alive path is left unmasked; every other token is set to `-inf`. The model's own logits (not a fixed value) are used to `argmax` among the currently valid candidates, so the function whose name tokens best match what the model would naturally generate is progressively selected as non-matching paths are eliminated.
-4. **State 3 — `"parameters": {` key.** As in state 1, this literal sequence is forced token-by-token.
-5. **After state 3.** Generation continues unconstrained by the mask, letting the model fill in the argument values. Brace balance (`open_brackets`, incremented/decremented by counting `{`/`}` in each decoded token) is tracked throughout, and generation stops as soon as the object closes and brackets return to zero — this is what caps `max_tokens` in practice for well-behaved outputs.
-
-The vocabulary file (`get_path_to_vocab_file`) is loaded once at `Generator` construction time to build the token-to-id table used for masking.
-
-## Design Decisions
-
-- **State machine over a hand-rolled grammar engine.** Since the *shape* of the output object (`{"name": ..., "parameters": {...}}`) is fixed and known in advance, a small explicit state machine is simpler and easier to reason about than a general-purpose constrained-JSON grammar, at the cost of being specific to this exact schema.
-- **Trie-based masking for function names.** Rather than generating the full name and validating it afterwards, invalid tokens are excluded *during* generation. This is what guarantees the emitted function name is always one of the ones defined in `functions_definition.json` — it cannot hallucinate a function that doesn't exist.
-- **Pydantic for all data structures.** `FunctionDefinition`, `TestPrompt`, and `OutputResult` are all Pydantic models, giving input/output validation for free and satisfying the project's pydantic requirement.
-- **`np.argmax` over the masked logits array.** Masked candidates (`-inf`) can never be selected by `argmax`, so masking and selection stay decoupled and easy to test independently.
-
-## Performance Analysis
-
-- **JSON validity:** structural tokens (`{`, key names, `parameters` key) are always forced, so the skeleton of the output is 100% syntactically predictable by construction.
-- **Function selection accuracy:** constrained to the exact set of function names in `functions_definition.json`, so the model cannot invent a nonexistent function name.
-- **Argument extraction:** currently generated without token-level type/schema constraints — the model fills the `parameters` object freely once inside state 3, relying on the prompt (function description + parameter types, built in `prompt_builder.build_context`) rather than logit masking. This is the main area where reliability still depends on the model's own behaviour rather than being structurally guaranteed.
-- **Speed:** dominated by one forward pass per generated token (`get_logits_from_input_ids`); for the 11 sample prompts and short expected outputs this comfortably finishes well under the 5-minute budget on standard hardware.
-
-## Challenges Faced
-
-- **Balancing forced tokens vs. model freedom.** Forcing too much (e.g. exact key names) is straightforward, but deciding *where* to stop forcing and let the model reason (argument values) required tracking brace depth carefully so generation reliably terminates instead of running to `max_tokens`.
-- **Token-level ambiguity in the function-name trie.** Since tokenization doesn't align with word boundaries, function names sharing a common prefix (e.g. two names both starting `fn_get_`) need their full token paths tracked and pruned step-by-step rather than compared as strings.
-- **Determinism of state transitions.** Detecting "we've just left state 2" (i.e., `len(active_paths[0]) == 0`) needed care to make sure the trie was updated in lockstep with the actual token emitted, not just with the intended one.
-
-## Testing Strategy
-
-- Manual runs against the provided `data/input/function_calling_tests.json` and `data/input/functions_definition.json`, checking that:
-  - the output file is valid, parseable JSON;
-  - every `name` matches a function defined in `functions_definition.json`;
-  - `parameters` contains all required argument keys.
-- Edge-case prompts were included in the input set: ambiguous/ordinary numeric prompts, string-manipulation prompts requiring regex-shaped parameters, and prompts naming values embedded in quotes.
-- `flake8` and `mypy` (via `make lint`) are run to catch style and typing issues before functional testing.
-
-## Example Usage
+The project also provides Makefile commands for common operations:
 
 ```bash
-$ make run
-Processed: 'What is the sum of 2 and 3?' -> fn_add_numbers
-Processed: 'Greet shrek' -> fn_greet
-Processed: 'Reverse the string 'hello'' -> fn_reverse_string
-...
+make install
+make run
+make debug
+make lint
+make clean
 ```
 
-Resulting `data/output/function_calling_results.json`:
+---
 
-```json
-[
-  {
-    "prompt": "What is the sum of 2 and 3?",
-    "name": "fn_add_numbers",
-    "parameters": {"a": 2.0, "b": 3.0}
-  },
-  {
-    "prompt": "Reverse the string 'hello'",
-    "name": "fn_reverse_string",
-    "parameters": {"s": "hello"}
-  }
-]
+## Project Structure
+
+```text
+src/
+├── __init__.py
+├── __main__.py
+├── generator.py
+├── prompt_builder.py
+├── schemas.py
+└── string_decoder.py
 ```
+
+### `__main__.py`
+
+Entry point of the application.
+
+It loads the input data, initializes the model and generator, processes each prompt and writes the final JSON output.
+
+### `generator.py`
+
+Contains the main constrained decoding logic.
+
+It is responsible for:
+
+* function selection;
+* JSON structure generation;
+* parameter generation;
+* numbers;
+* booleans;
+* integration with the string decoder.
+
+### `prompt_builder.py`
+
+Builds the prompt containing the available function definitions and the user's request.
+
+### `schemas.py`
+
+Contains Pydantic models and the input data loader.
+
+### `string_decoder.py`
+
+Implements the finite-state machine used for constrained JSON string generation.
+
+---
+
+## Requirements
+
+* Python 3.10+
+* `uv`
+* `numpy`
+* `pydantic`
+* Provided `llm_sdk`
+* Qwen/Qwen3-0.6B
+
+The project must work with the provided Qwen/Qwen3-0.6B model.
+
+---
 
 ## Resources
 
-- [Anthropic — Tool use / function calling overview](https://docs.claude.com/en/docs/build-with-claude/tool-use)
-- [Hugging Face — Guiding Text Generation with Constrained Decoding](https://huggingface.co/docs/transformers/main/en/generation_strategies)
-- [Qwen3 model card](https://huggingface.co/Qwen/Qwen3-0.6B)
-- [Pydantic documentation](https://docs.pydantic.dev/)
+The following resources were useful for understanding the concepts involved in the project:
 
-**AI usage:** AI assistance was used to discuss and clarify concepts around the token-by-token generation pipeline (tokenization, logits, `max_tokens`), the difference between `.append()` and `.extend()` when building token sequences, and the structure of 2D encoding/token-id representations, in order to better understand the `Small_LLM_Model` SDK before implementing the `Generator` class. All design decisions and code were written and reviewed personally.
+* [42 Curriculum](https://42.fr/)
+* [Qwen](https://huggingface.co/Qwen)
+* [Hugging Face](https://huggingface.co/)
+* JSON specification and syntax documentation
+* Python documentation
+* Pydantic documentation
+* Articles and tutorials about constrained decoding and function calling in language models
+
+### AI Usage
+
+AI tools were used as a development and learning aid throughout the project.
+
+They were used to:
+
+* understand constrained decoding concepts;
+* understand tokenization and logits;
+* debug Python code;
+* reason about finite-state machines;
+* investigate generation problems;
+* review implementation decisions;
+* suggest testing strategies;
+* improve project documentation.
+
+The final implementation was developed, tested and reviewed by the project authors.
+
+---
+
+## Error Handling
+
+The project attempts to handle invalid or missing input files gracefully.
+
+Examples include:
+
+* missing input files;
+* invalid JSON input;
+* invalid function definitions;
+* unsupported parameter types;
+* invalid generation states.
+
+Errors are reported to the user instead of being silently ignored whenever possible.
+
+---
+
+## Output Format
+
+The program generates a JSON array where each result contains exactly:
+
+```json
+{
+  "prompt": "Original user request",
+  "name": "function_name",
+  "parameters": {
+    "parameter": "value"
+  }
+}
+```
+
+The output is written to:
+
+```text
+data/output/function_calling_results.json
+```
+
+---
+
+## Conclusion
+
+Call Me Maybe demonstrates how constrained decoding can be used to guide a small language model toward structured function calls.
+
+Instead of trusting the language model to generate valid JSON by itself, the project combines LLM inference with token-level constraints and type-specific generation logic.
+
+This approach provides a practical balance between the flexibility of a language model and the structural reliability required for machine-readable output.

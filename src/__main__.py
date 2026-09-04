@@ -56,9 +56,9 @@ def main() -> None:
 
     for prompt_item in prompts:
         final_text = build_context(functions, prompt_item.prompt)
-        result_str: str = generator.generate(final_text)
 
         try:
+            result_str: str = generator.generate(final_text)
             generated_dict: dict[str, Any] = json.loads(result_str)
 
             final_obj: OutputResult = OutputResult(
